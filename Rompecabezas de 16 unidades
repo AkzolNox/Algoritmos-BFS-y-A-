@@ -1,7 +1,7 @@
 import time
 
 class PuzzleState:
-    def _init_(self, board, moves=0, path=None):
+    def __init__(self, board, moves=0, path=None):
         self.board = [row[:] for row in board]  # Copia profunda manual
         self.moves = moves
         self.path = path or []
@@ -51,6 +51,56 @@ class PuzzleState:
                     distance += abs(i - target_row) + abs(j - target_col)
         return distance
     
+    def misplaced_tiles(self):
+        """Cuenta el número de fichas fuera de lugar (heurística alternativa)"""
+        goal = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 0]]
+        count = 0
+        for i in range(4):
+            for j in range(4):
+                if self.board[i][j] != 0 and self.board[i][j] != goal[i][j]:
+                    count += 1
+        return count
+    
+    def linear_conflict(self):
+        """Heurística de conflicto lineal (más informada que Manhattan)"""
+        distance = self.manhattan_distance()
+        
+        # Conflictos horizontales
+        for i in range(4):
+            for j in range(4):
+                if self.board[i][j] != 0:
+                    value = self.board[i][j]
+                    target_row = (value - 1) // 4
+                    if i == target_row:  # Está en la fila correcta
+                        for k in range(j + 1, 4):
+                            if self.board[i][k] != 0:
+                                k_value = self.board[i][k]
+                                k_target_row = (k_value - 1) // 4
+                                k_target_col = (k_value - 1) % 4
+                                target_col = (value - 1) % 4
+                                if (i == k_target_row and 
+                                    k_target_col < target_col):
+                                    distance += 2
+        
+        # Conflictos verticales
+        for j in range(4):
+            for i in range(4):
+                if self.board[i][j] != 0:
+                    value = self.board[i][j]
+                    target_col = (value - 1) % 4
+                    if j == target_col:  # Está en la columna correcta
+                        for k in range(i + 1, 4):
+                            if self.board[k][j] != 0:
+                                k_value = self.board[k][j]
+                                k_target_row = (k_value - 1) // 4
+                                k_target_col = (k_value - 1) % 4
+                                target_row = (value - 1) // 4
+                                if (j == k_target_col and 
+                                    k_target_row < target_row):
+                                    distance += 2
+        
+        return distance
+    
     def board_string(self):
         """Convierte el tablero a string para comparaciones"""
         return str(self.board)
@@ -96,7 +146,7 @@ def is_solvable(board):
     else:
         return inversions % 2 == 1
 
-def bfs_solve(initial_state, max_nodes=10000):
+def bfs_solve(initial_state, max_nodes=15000):
     """Búsqueda a ciegas usando BFS (implementación manual de cola)"""
     if initial_state.is_goal():
         return initial_state
@@ -114,7 +164,8 @@ def bfs_solve(initial_state, max_nodes=10000):
         nodes_explored += 1
         
         if nodes_explored % 1000 == 0:
-            print(f"Nodos explorados: {nodes_explored}, Cola: {len(queue)}")
+            elapsed_time = time.time() - start_time
+            print(f"Nodos explorados: {nodes_explored}, Cola: {len(queue)}, Tiempo: {elapsed_time:.1f}s")
         
         for neighbor in current.get_neighbors():
             neighbor_str = neighbor.board_string()
@@ -137,9 +188,54 @@ def bfs_solve(initial_state, max_nodes=10000):
     
     return None
 
+def dfs_solve(initial_state, max_nodes=15000, max_depth=50):
+    """Búsqueda en profundidad con límite de profundidad"""
+    if initial_state.is_goal():
+        return initial_state
+    
+    stack = [initial_state]
+    visited = set()
+    visited.add(initial_state.board_string())
+    nodes_explored = 0
+    
+    print("Iniciando DFS...")
+    start_time = time.time()
+    
+    while stack:
+        current = stack.pop()  # LIFO para DFS
+        nodes_explored += 1
+        
+        if nodes_explored % 1000 == 0:
+            elapsed_time = time.time() - start_time
+            print(f"Nodos explorados: {nodes_explored}, Pila: {len(stack)}, Tiempo: {elapsed_time:.1f}s")
+        
+        if current.moves > max_depth:  # Límite de profundidad
+            continue
+            
+        for neighbor in current.get_neighbors():
+            neighbor_str = neighbor.board_string()
+            
+            if neighbor.is_goal():
+                end_time = time.time()
+                print(f"¡Solución encontrada con DFS!")
+                print(f"Tiempo: {end_time - start_time:.2f} segundos")
+                print(f"Nodos explorados: {nodes_explored}")
+                print(f"Movimientos: {neighbor.moves}")
+                return neighbor
+            
+            if neighbor_str not in visited and neighbor.moves <= max_depth:
+                visited.add(neighbor_str)
+                stack.append(neighbor)
+        
+        if nodes_explored > max_nodes:
+            print(f"Límite de {max_nodes} nodos alcanzado en DFS")
+            return None
+    
+    return None
+
 class SimpleHeap:
     """Implementación simple de heap para A*"""
-    def _init_(self):
+    def __init__(self):
         self.items = []
     
     def push(self, item, priority):
@@ -156,17 +252,31 @@ class SimpleHeap:
     def is_empty(self):
         return len(self.items) == 0
 
-def astar_solve(initial_state, max_nodes=25000):
-    """Búsqueda informada usando A*"""
+def astar_solve(initial_state, max_nodes=50000, heuristic="manhattan"):
+    """Búsqueda informada usando A* con diferentes heurísticas"""
     if initial_state.is_goal():
         return initial_state
     
     heap = SimpleHeap()
-    heap.push(initial_state, initial_state.moves + initial_state.manhattan_distance())
+    
+    # Seleccionar heurística
+    if heuristic == "manhattan":
+        h_func = lambda state: state.manhattan_distance()
+    elif heuristic == "misplaced":
+        h_func = lambda state: state.misplaced_tiles()
+    elif heuristic == "linear_conflict":
+        h_func = lambda state: state.linear_conflict()
+    else:
+        h_func = lambda state: state.manhattan_distance()
+    
+    initial_h = h_func(initial_state)
+    heap.push(initial_state, initial_state.moves + initial_h)
+    
     visited = set()
     nodes_explored = 0
     
-    print("Iniciando A*...")
+    print(f"Iniciando A* con heurística {heuristic}...")
+    print(f"Heurística inicial: {initial_h}")
     start_time = time.time()
     
     while not heap.is_empty():
@@ -180,12 +290,13 @@ def astar_solve(initial_state, max_nodes=25000):
         nodes_explored += 1
         
         if nodes_explored % 1000 == 0:
-            f_score = current.moves + current.manhattan_distance()
-            print(f"Nodos explorados: {nodes_explored}, f(n): {f_score}")
+            elapsed_time = time.time() - start_time
+            f_score = current.moves + h_func(current)
+            print(f"Nodos explorados: {nodes_explored}, f(n): {f_score}, g(n): {current.moves}, h(n): {h_func(current)}, Tiempo: {elapsed_time:.1f}s")
         
         if current.is_goal():
             end_time = time.time()
-            print(f"¡Solución encontrada con A*!")
+            print(f"¡Solución encontrada con A* ({heuristic})!")
             print(f"Tiempo: {end_time - start_time:.2f} segundos")
             print(f"Nodos explorados: {nodes_explored}")
             print(f"Movimientos: {current.moves}")
@@ -194,7 +305,7 @@ def astar_solve(initial_state, max_nodes=25000):
         for neighbor in current.get_neighbors():
             neighbor_str = neighbor.board_string()
             if neighbor_str not in visited:
-                priority = neighbor.moves + neighbor.manhattan_distance()
+                priority = neighbor.moves + h_func(neighbor)
                 heap.push(neighbor, priority)
         
         if nodes_explored > max_nodes:
@@ -203,12 +314,69 @@ def astar_solve(initial_state, max_nodes=25000):
     
     return None
 
+def greedy_best_first_solve(initial_state, max_nodes=25000):
+    """Búsqueda Best-First Greedy (solo heurística, sin costo)"""
+    if initial_state.is_goal():
+        return initial_state
+    
+    heap = SimpleHeap()
+    heap.push(initial_state, initial_state.manhattan_distance())
+    
+    visited = set()
+    nodes_explored = 0
+    
+    print("Iniciando Greedy Best-First...")
+    start_time = time.time()
+    
+    while not heap.is_empty():
+        current = heap.pop()
+        current_str = current.board_string()
+        
+        if current_str in visited:
+            continue
+            
+        visited.add(current_str)
+        nodes_explored += 1
+        
+        if nodes_explored % 1000 == 0:
+            elapsed_time = time.time() - start_time
+            h_score = current.manhattan_distance()
+            print(f"Nodos explorados: {nodes_explored}, h(n): {h_score}, Movimientos: {current.moves}, Tiempo: {elapsed_time:.1f}s")
+        
+        if current.is_goal():
+            end_time = time.time()
+            print(f"¡Solución encontrada con Greedy Best-First!")
+            print(f"Tiempo: {end_time - start_time:.2f} segundos")
+            print(f"Nodos explorados: {nodes_explored}")
+            print(f"Movimientos: {current.moves}")
+            return current
+        
+        for neighbor in current.get_neighbors():
+            neighbor_str = neighbor.board_string()
+            if neighbor_str not in visited:
+                priority = neighbor.manhattan_distance()
+                heap.push(neighbor, priority)
+        
+        if nodes_explored > max_nodes:
+            print(f"Límite de {max_nodes} nodos alcanzado en Greedy Best-First")
+            return None
+    
+    return None
+
 def print_solution(solution):
     """Imprime la secuencia de movimientos de la solución"""
     if solution:
         print(f"\nSecuencia de movimientos ({len(solution.path)} pasos):")
-        for i, move in enumerate(solution.path, 1):
-            print(f"{i:2d}. {move}")
+        
+        # Mostrar movimientos en grupos de 10
+        for i in range(0, len(solution.path), 10):
+            group = solution.path[i:i+10]
+            moves_str = ", ".join(f"{i+j+1:2d}.{move[:3]}" for j, move in enumerate(group))
+            print(f"  {moves_str}")
+        
+        print(f"\nEstadísticas:")
+        print(f"- Movimientos totales: {len(solution.path)}")
+        print(f"- Distancia Manhattan final: {solution.manhattan_distance()}")
         
         print("\nTablero final:")
         solution.print_board()
@@ -217,9 +385,10 @@ def print_solution(solution):
 
 def create_puzzle():
     """Permite al usuario crear su propio puzzle"""
-    print("Crear puzzle personalizado:")
+    print("\nCrear puzzle personalizado:")
     print("Introduce los números del 0-15 (0 = espacio vacío)")
     print("Fila por fila, separados por espacios")
+    print("Ejemplo: 1 2 3 4")
     
     board = []
     for i in range(4):
@@ -265,28 +434,25 @@ def generate_random_puzzle(difficulty="medio"):
     
     # Número de movimientos según dificultad
     move_counts = {
-        "facil": 10,
-        "medio": 25,
-        "dificil": 50,
+        "facil": 15,
+        "medio": 35,
+        "dificil": 60,
         "extremo": 100
     }
     
-    moves = move_counts.get(difficulty, 25)
+    moves = move_counts.get(difficulty, 35)
     print(f"Generando puzzle aleatorio ({difficulty}) con {moves} movimientos...")
     
     # Realizar movimientos aleatorios desde el estado objetivo
-    # Esto garantiza que el puzzle sea solucionable
     current_state = PuzzleState(board)
     
     for i in range(moves):
         neighbors = current_state.get_neighbors()
         if neighbors:
-            # Elegir movimiento aleatorio
             random_index = simple_random(len(neighbors))
             current_state = neighbors[random_index]
         
-        # Mostrar progreso
-        if (i + 1) % 10 == 0:
+        if (i + 1) % 20 == 0:
             print(f"Progreso: {i + 1}/{moves} movimientos")
     
     return current_state.board
@@ -294,9 +460,9 @@ def generate_random_puzzle(difficulty="medio"):
 def select_random_difficulty():
     """Permite al usuario seleccionar la dificultad del puzzle aleatorio"""
     print("\nSelecciona la dificultad del puzzle aleatorio:")
-    print("1. Fácil (10 movimientos)")
-    print("2. Medio (25 movimientos)")
-    print("3. Difícil (50 movimientos)")
+    print("1. Fácil (15 movimientos)")
+    print("2. Medio (35 movimientos)")
+    print("3. Difícil (60 movimientos)")
     print("4. Extremo (100 movimientos)")
     
     difficulty_map = {
@@ -316,8 +482,80 @@ def select_random_difficulty():
         except ValueError:
             print("Por favor, introduce un número válido")
 
+def select_algorithm():
+    """Permite seleccionar el algoritmo a usar"""
+    print("\n¿Qué algoritmo quieres usar?")
+    print("1. A* Manhattan (Recomendado - equilibrado)")
+    print("2. A* Linear Conflict (Más informado)")
+    print("3. A* Misplaced Tiles (Menos informado)")
+    print("4. Greedy Best-First (Rápido, no óptimo)")
+    print("5. BFS (Óptimo, pero lento)")
+    print("6. DFS (Rápido, no óptimo)")
+    print("7. Comparar A* vs Greedy")
+    print("8. Comparar todos")
+    
+    while True:
+        try:
+            choice = int(input("Elige algoritmo (1-8): "))
+            if 1 <= choice <= 8:
+                return choice
+            else:
+                print("Por favor, introduce un número del 1 al 8")
+        except ValueError:
+            print("Por favor, introduce un número válido")
+
+def run_comparison(puzzle_state, algorithms):
+    """Ejecuta comparación entre múltiples algoritmos"""
+    results = {}
+    
+    print(f"\n{'='*60}")
+    print("COMPARACIÓN DE ALGORITMOS")
+    print(f"{'='*60}")
+    
+    for name, solver_func in algorithms:
+        print(f"\n--- Ejecutando {name} ---")
+        try:
+            start_time = time.time()
+            solution = solver_func()
+            end_time = time.time()
+            
+            if solution:
+                results[name] = {
+                    'time': end_time - start_time,
+                    'moves': solution.moves,
+                    'path_length': len(solution.path),
+                    'found': True
+                }
+            else:
+                results[name] = {
+                    'time': end_time - start_time,
+                    'moves': 0,
+                    'path_length': 0,
+                    'found': False
+                }
+        except Exception as e:
+            print(f"Error en {name}: {e}")
+            results[name] = {
+                'time': 0,
+                'moves': 0,
+                'path_length': 0,
+                'found': False
+            }
+    
+    # Mostrar tabla comparativa
+    print(f"\n{'='*80}")
+    print("RESULTADOS COMPARATIVOS")
+    print(f"{'='*80}")
+    print(f"{'Algoritmo':<20} {'Tiempo (s)':<12} {'Movimientos':<12} {'Encontrado':<12}")
+    print("-" * 80)
+    
+    for name, result in results.items():
+        status = "Sí" if result['found'] else "No"
+        moves = result['moves'] if result['found'] else "N/A"
+        print(f"{name:<20} {result['time']:<12.3f} {moves:<12} {status:<12}")
+
 def main():
-    print("=== SOLUCIONADOR DE 15-PUZZLE ===")
+    print("=== SOLUCIONADOR AVANZADO DE 15-PUZZLE ===")
     print("1. Usar puzzles predefinidos")
     print("2. Crear puzzle personalizado")
     print("3. Generar puzzle aleatorio")
@@ -350,7 +588,7 @@ def main():
         temp_state.print_board()
         print(f"Distancia Manhattan inicial: {temp_state.manhattan_distance()}")
     else:
-        # Puzzles predefinidos
+        # Puzzles predefinidos mejorados
         puzzle_facil = [
             [1, 2, 3, 4],
             [5, 6, 7, 8],
@@ -372,93 +610,98 @@ def main():
             [13, 14, 0, 15]
         ]
         
+        puzzle_extremo = [
+            [0, 12, 9, 13],
+            [15, 11, 10, 14],
+            [3, 7, 2, 5],
+            [4, 8, 6, 1]
+        ]
+        
         puzzles = [
             ("Fácil", puzzle_facil),
             ("Medio", puzzle_medio),
-            ("Difícil", puzzle_dificil)
+            ("Difícil", puzzle_dificil),
+            ("Extremo", puzzle_extremo)
         ]
     
     for nombre, puzzle in puzzles:
-        print("\n" + "="*50)
+        print("\n" + "="*60)
         print(f"Resolviendo puzzle {nombre}:")
-        print("="*50)
+        print("="*60)
         
         initial_state = PuzzleState(puzzle)
         
         print("Estado inicial:")
         initial_state.print_board()
+        print(f"Distancia Manhattan: {initial_state.manhattan_distance()}")
+        print(f"Fichas mal colocadas: {initial_state.misplaced_tiles()}")
         
         if not is_solvable(puzzle):
             print("¡Este puzzle no tiene solución!")
             continue
         
-        print("\n¿Qué algoritmo quieres usar?")
-        print("1. A* (Recomendado - más rápido)")
-        print("2. BFS (Más lento pero exhaustivo)")
-        print("3. Ambos (para comparar)")
+        alg_choice = select_algorithm()
         
-        while True:
-            try:
-                alg_choice = int(input("Elige opción (1-3): "))
-                if alg_choice in [1, 2, 3]:
-                    break
-                else:
-                    print("Por favor, introduce 1, 2 o 3")
-            except ValueError:
-                print("Por favor, introduce un número válido")
+        if alg_choice == 1:
+            solution = astar_solve(PuzzleState(puzzle), heuristic="manhattan")
+            if solution:
+                print_solution(solution)
         
-        if alg_choice in [1, 3]:
-            print("\n--- Algoritmo A* ---")
-            solution_astar = astar_solve(PuzzleState(puzzle))
-            if solution_astar:
-                print_solution(solution_astar)
+        elif alg_choice == 2:
+            solution = astar_solve(PuzzleState(puzzle), heuristic="linear_conflict")
+            if solution:
+                print_solution(solution)
         
-        if alg_choice in [2, 3]:
-            print("\n--- Algoritmo BFS ---")
-            # Solo usar BFS para puzzles no muy difíciles o si es el único puzzle
-            if ("Extremo" not in nombre and "Difícil" not in nombre) or len(puzzles) == 1:
-                if "Extremo" in nombre:
-                    print("Advertencia: BFS puede ser muy lento para este puzzle...")
-                    confirm = input("¿Continuar con BFS? (s/n): ").lower()
-                    if confirm != 's':
-                        print("BFS omitido por el usuario")
-                        continue
-                
-                solution_bfs = bfs_solve(PuzzleState(puzzle))
-                if solution_bfs:
-                    print_solution(solution_bfs)
+        elif alg_choice == 3:
+            solution = astar_solve(PuzzleState(puzzle), heuristic="misplaced")
+            if solution:
+                print_solution(solution)
+        
+        elif alg_choice == 4:
+            solution = greedy_best_first_solve(PuzzleState(puzzle))
+            if solution:
+                print_solution(solution)
+        
+        elif alg_choice == 5:
+            if "Extremo" in nombre:
+                print("Advertencia: BFS puede ser muy lento para este puzzle...")
+                confirm = input("¿Continuar con BFS? (s/n): ").lower()
+                if confirm != 's':
+                    continue
+            solution = bfs_solve(PuzzleState(puzzle))
+            if solution:
+                print_solution(solution)
+        
+        elif alg_choice == 6:
+            solution = dfs_solve(PuzzleState(puzzle))
+            if solution:
+                print_solution(solution)
+        
+        elif alg_choice == 7:
+            algorithms = [
+                ("A* Manhattan", lambda: astar_solve(PuzzleState(puzzle), heuristic="manhattan")),
+                ("Greedy Best-First", lambda: greedy_best_first_solve(PuzzleState(puzzle)))
+            ]
+            run_comparison(PuzzleState(puzzle), algorithms)
+        
+        elif alg_choice == 8:
+            # Solo algoritmos rápidos para puzzles extremos
+            if "Extremo" in nombre:
+                algorithms = [
+                    ("A* Manhattan", lambda: astar_solve(PuzzleState(puzzle), heuristic="manhattan")),
+                    ("A* Linear Conflict", lambda: astar_solve(PuzzleState(puzzle), heuristic="linear_conflict")),
+                    ("Greedy Best-First", lambda: greedy_best_first_solve(PuzzleState(puzzle)))
+                ]
             else:
-                print("(BFS omitido para este puzzle - demasiado complejo)")
-        
-        # Para puzzles aleatorios, preguntar si generar otro
-        if len(puzzles) == 1 and "Aleatorio" in puzzles[0][0]:
-            print(f"\n¿Quieres generar otro puzzle aleatorio?")
-            print("1. Sí, misma dificultad")
-            print("2. Sí, diferente dificultad") 
-            print("3. No, terminar")
-            
-            while True:
-                try:
-                    next_choice = int(input("Elige opción (1-3): "))
-                    if next_choice in [1, 2, 3]:
-                        break
-                    else:
-                        print("Por favor, introduce 1, 2 o 3")
-                except ValueError:
-                    print("Por favor, introduce un número válido")
-            
-            if next_choice == 1:
-                # Misma dificultad
-                current_difficulty = nombre.split('(')[1].split(')')[0].lower()
-                new_puzzle = generate_random_puzzle(current_difficulty)
-                puzzles = [(f"Aleatorio ({current_difficulty.capitalize()})", new_puzzle)]
-            elif next_choice == 2:
-                # Diferente dificultad
-                new_difficulty = select_random_difficulty()
-                new_puzzle = generate_random_puzzle(new_difficulty)
-                puzzles = [(f"Aleatorio ({new_difficulty.capitalize()})", new_puzzle)]
-            else:
-                break  # Terminar
+                algorithms = [
+                    ("A* Manhattan", lambda: astar_solve(PuzzleState(puzzle), heuristic="manhattan")),
+                    ("A* Linear Conflict", lambda: astar_solve(PuzzleState(puzzle), heuristic="linear_conflict")),
+                    ("A* Misplaced", lambda: astar_solve(PuzzleState(puzzle), heuristic="misplaced")),
+                    ("Greedy Best-First", lambda: greedy_best_first_solve(PuzzleState(puzzle))),
+                    ("BFS", lambda: bfs_solve(PuzzleState(puzzle))),
+                    ("DFS", lambda: dfs_solve(PuzzleState(puzzle)))
+                ]
+            run_comparison(PuzzleState(puzzle), algorithms)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()

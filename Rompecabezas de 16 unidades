@@ -1,0 +1,464 @@
+import time
+
+class PuzzleState:
+    def _init_(self, board, moves=0, path=None):
+        self.board = [row[:] for row in board]  # Copia profunda manual
+        self.moves = moves
+        self.path = path or []
+        self.blank_pos = self.find_blank()
+        
+    def find_blank(self):
+        """Encuentra la posición del espacio vacío (0)"""
+        for i in range(4):
+            for j in range(4):
+                if self.board[i][j] == 0:
+                    return (i, j)
+        return None
+    
+    def is_goal(self):
+        """Verifica si el estado actual es el objetivo"""
+        goal = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 0]]
+        return self.board == goal
+    
+    def get_neighbors(self):
+        """Genera todos los estados posibles moviendo el espacio vacío"""
+        neighbors = []
+        row, col = self.blank_pos
+        directions = [(-1, 0, 'ARRIBA'), (1, 0, 'ABAJO'), (0, -1, 'IZQUIERDA'), (0, 1, 'DERECHA')]
+        
+        for dr, dc, move in directions:
+            new_row, new_col = row + dr, col + dc
+            if 0 <= new_row < 4 and 0 <= new_col < 4:
+                # Crear nuevo estado intercambiando el espacio vacío
+                new_board = [row[:] for row in self.board]  # Copia manual
+                new_board[row][col], new_board[new_row][new_col] = \
+                    new_board[new_row][new_col], new_board[row][col]
+                
+                new_path = self.path + [move]
+                neighbors.append(PuzzleState(new_board, self.moves + 1, new_path))
+        
+        return neighbors
+    
+    def manhattan_distance(self):
+        """Calcula la distancia Manhattan como heurística"""
+        distance = 0
+        for i in range(4):
+            for j in range(4):
+                if self.board[i][j] != 0:
+                    value = self.board[i][j]
+                    target_row = (value - 1) // 4
+                    target_col = (value - 1) % 4
+                    distance += abs(i - target_row) + abs(j - target_col)
+        return distance
+    
+    def board_string(self):
+        """Convierte el tablero a string para comparaciones"""
+        return str(self.board)
+    
+    def print_board(self):
+        """Imprime el tablero de forma legible"""
+        print("┌────┬────┬────┬────┐")
+        for i, row in enumerate(self.board):
+            line = "│"
+            for num in row:
+                if num == 0:
+                    line += "    │"
+                else:
+                    line += f" {num:2d} │"
+            print(line)
+            if i < 3:
+                print("├────┼────┼────┼────┤")
+        print("└────┴────┴────┴────┘")
+
+def is_solvable(board):
+    """Verifica si el puzzle tiene solución"""
+    # Contar inversiones
+    flat = []
+    blank_row = 0
+    
+    for i in range(4):
+        for j in range(4):
+            if board[i][j] == 0:
+                blank_row = 4 - i  # Fila desde abajo
+            else:
+                flat.append(board[i][j])
+    
+    inversions = 0
+    for i in range(len(flat)):
+        for j in range(i + 1, len(flat)):
+            if flat[i] > flat[j]:
+                inversions += 1
+    
+    # Para 4x4: solvable si inversiones par y blank en fila impar (desde abajo)
+    # o inversiones impar y blank en fila par
+    if blank_row % 2 == 1:
+        return inversions % 2 == 0
+    else:
+        return inversions % 2 == 1
+
+def bfs_solve(initial_state, max_nodes=10000):
+    """Búsqueda a ciegas usando BFS (implementación manual de cola)"""
+    if initial_state.is_goal():
+        return initial_state
+    
+    queue = [initial_state]
+    visited = set()
+    visited.add(initial_state.board_string())
+    nodes_explored = 0
+    
+    print("Iniciando BFS...")
+    start_time = time.time()
+    
+    while queue:
+        current = queue.pop(0)  # Simula dequeue
+        nodes_explored += 1
+        
+        if nodes_explored % 1000 == 0:
+            print(f"Nodos explorados: {nodes_explored}, Cola: {len(queue)}")
+        
+        for neighbor in current.get_neighbors():
+            neighbor_str = neighbor.board_string()
+            
+            if neighbor.is_goal():
+                end_time = time.time()
+                print(f"¡Solución encontrada con BFS!")
+                print(f"Tiempo: {end_time - start_time:.2f} segundos")
+                print(f"Nodos explorados: {nodes_explored}")
+                print(f"Movimientos: {neighbor.moves}")
+                return neighbor
+            
+            if neighbor_str not in visited:
+                visited.add(neighbor_str)
+                queue.append(neighbor)
+        
+        if nodes_explored > max_nodes:
+            print(f"Límite de {max_nodes} nodos alcanzado en BFS")
+            return None
+    
+    return None
+
+class SimpleHeap:
+    """Implementación simple de heap para A*"""
+    def _init_(self):
+        self.items = []
+    
+    def push(self, item, priority):
+        """Añade elemento con prioridad"""
+        self.items.append((priority, item))
+        self.items.sort(key=lambda x: x[0])  # Mantiene ordenado
+    
+    def pop(self):
+        """Extrae elemento con menor prioridad"""
+        if self.items:
+            return self.items.pop(0)[1]
+        return None
+    
+    def is_empty(self):
+        return len(self.items) == 0
+
+def astar_solve(initial_state, max_nodes=25000):
+    """Búsqueda informada usando A*"""
+    if initial_state.is_goal():
+        return initial_state
+    
+    heap = SimpleHeap()
+    heap.push(initial_state, initial_state.moves + initial_state.manhattan_distance())
+    visited = set()
+    nodes_explored = 0
+    
+    print("Iniciando A*...")
+    start_time = time.time()
+    
+    while not heap.is_empty():
+        current = heap.pop()
+        current_str = current.board_string()
+        
+        if current_str in visited:
+            continue
+            
+        visited.add(current_str)
+        nodes_explored += 1
+        
+        if nodes_explored % 1000 == 0:
+            f_score = current.moves + current.manhattan_distance()
+            print(f"Nodos explorados: {nodes_explored}, f(n): {f_score}")
+        
+        if current.is_goal():
+            end_time = time.time()
+            print(f"¡Solución encontrada con A*!")
+            print(f"Tiempo: {end_time - start_time:.2f} segundos")
+            print(f"Nodos explorados: {nodes_explored}")
+            print(f"Movimientos: {current.moves}")
+            return current
+        
+        for neighbor in current.get_neighbors():
+            neighbor_str = neighbor.board_string()
+            if neighbor_str not in visited:
+                priority = neighbor.moves + neighbor.manhattan_distance()
+                heap.push(neighbor, priority)
+        
+        if nodes_explored > max_nodes:
+            print(f"Límite de {max_nodes} nodos alcanzado en A*")
+            return None
+    
+    return None
+
+def print_solution(solution):
+    """Imprime la secuencia de movimientos de la solución"""
+    if solution:
+        print(f"\nSecuencia de movimientos ({len(solution.path)} pasos):")
+        for i, move in enumerate(solution.path, 1):
+            print(f"{i:2d}. {move}")
+        
+        print("\nTablero final:")
+        solution.print_board()
+    else:
+        print("No se encontró solución")
+
+def create_puzzle():
+    """Permite al usuario crear su propio puzzle"""
+    print("Crear puzzle personalizado:")
+    print("Introduce los números del 0-15 (0 = espacio vacío)")
+    print("Fila por fila, separados por espacios")
+    
+    board = []
+    for i in range(4):
+        while True:
+            try:
+                row_input = input(f"Fila {i+1}: ").strip().split()
+                if len(row_input) != 4:
+                    print("Error: Debes introducir exactamente 4 números")
+                    continue
+                
+                row = [int(x) for x in row_input]
+                if not all(0 <= x <= 15 for x in row):
+                    print("Error: Los números deben estar entre 0 y 15")
+                    continue
+                
+                board.append(row)
+                break
+            except ValueError:
+                print("Error: Introduce solo números enteros")
+    
+    # Verificar que todos los números 0-15 estén presentes
+    flat = [num for row in board for num in row]
+    if sorted(flat) != list(range(16)):
+        print("Error: Debes usar todos los números del 0 al 15 exactamente una vez")
+        return None
+    
+    return board
+
+def generate_random_puzzle(difficulty="medio"):
+    """Genera un puzzle aleatorio solucionable"""
+    import time
+    # Usar tiempo actual como semilla para pseudo-aleatoriedad
+    seed = int(time.time() * 1000) % 10000
+    
+    def simple_random(max_val):
+        """Generador de números pseudo-aleatorios simple"""
+        nonlocal seed
+        seed = (seed * 1103515245 + 12345) % (2**31)
+        return seed % max_val
+    
+    # Comenzar con el estado objetivo
+    board = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 0]]
+    
+    # Número de movimientos según dificultad
+    move_counts = {
+        "facil": 10,
+        "medio": 25,
+        "dificil": 50,
+        "extremo": 100
+    }
+    
+    moves = move_counts.get(difficulty, 25)
+    print(f"Generando puzzle aleatorio ({difficulty}) con {moves} movimientos...")
+    
+    # Realizar movimientos aleatorios desde el estado objetivo
+    # Esto garantiza que el puzzle sea solucionable
+    current_state = PuzzleState(board)
+    
+    for i in range(moves):
+        neighbors = current_state.get_neighbors()
+        if neighbors:
+            # Elegir movimiento aleatorio
+            random_index = simple_random(len(neighbors))
+            current_state = neighbors[random_index]
+        
+        # Mostrar progreso
+        if (i + 1) % 10 == 0:
+            print(f"Progreso: {i + 1}/{moves} movimientos")
+    
+    return current_state.board
+
+def select_random_difficulty():
+    """Permite al usuario seleccionar la dificultad del puzzle aleatorio"""
+    print("\nSelecciona la dificultad del puzzle aleatorio:")
+    print("1. Fácil (10 movimientos)")
+    print("2. Medio (25 movimientos)")
+    print("3. Difícil (50 movimientos)")
+    print("4. Extremo (100 movimientos)")
+    
+    difficulty_map = {
+        1: "facil",
+        2: "medio", 
+        3: "dificil",
+        4: "extremo"
+    }
+    
+    while True:
+        try:
+            choice = int(input("Elige dificultad (1-4): "))
+            if choice in difficulty_map:
+                return difficulty_map[choice]
+            else:
+                print("Por favor, introduce un número del 1 al 4")
+        except ValueError:
+            print("Por favor, introduce un número válido")
+
+def main():
+    print("=== SOLUCIONADOR DE 15-PUZZLE ===")
+    print("1. Usar puzzles predefinidos")
+    print("2. Crear puzzle personalizado")
+    print("3. Generar puzzle aleatorio")
+    
+    while True:
+        try:
+            choice = int(input("\nElige opción (1-3): "))
+            if choice in [1, 2, 3]:
+                break
+            else:
+                print("Por favor, introduce 1, 2 o 3")
+        except ValueError:
+            print("Por favor, introduce un número válido")
+    
+    if choice == 2:
+        puzzle = create_puzzle()
+        if puzzle is None:
+            print("Error creando puzzle. Usando puzzle predefinido.")
+            puzzle = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 0, 15]]
+        puzzles = [("Personalizado", puzzle)]
+    elif choice == 3:
+        difficulty = select_random_difficulty()
+        puzzle = generate_random_puzzle(difficulty)
+        puzzle_name = f"Aleatorio ({difficulty.capitalize()})"
+        puzzles = [(puzzle_name, puzzle)]
+        
+        print(f"\n¡Puzzle aleatorio generado!")
+        print("Estado inicial:")
+        temp_state = PuzzleState(puzzle)
+        temp_state.print_board()
+        print(f"Distancia Manhattan inicial: {temp_state.manhattan_distance()}")
+    else:
+        # Puzzles predefinidos
+        puzzle_facil = [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 0, 15]
+        ]
+        
+        puzzle_medio = [
+            [1, 2, 3, 4],
+            [5, 6, 0, 8],
+            [9, 10, 7, 11],
+            [13, 14, 15, 12]
+        ]
+        
+        puzzle_dificil = [
+            [5, 1, 3, 4],
+            [2, 6, 8, 12],
+            [9, 10, 7, 11],
+            [13, 14, 0, 15]
+        ]
+        
+        puzzles = [
+            ("Fácil", puzzle_facil),
+            ("Medio", puzzle_medio),
+            ("Difícil", puzzle_dificil)
+        ]
+    
+    for nombre, puzzle in puzzles:
+        print("\n" + "="*50)
+        print(f"Resolviendo puzzle {nombre}:")
+        print("="*50)
+        
+        initial_state = PuzzleState(puzzle)
+        
+        print("Estado inicial:")
+        initial_state.print_board()
+        
+        if not is_solvable(puzzle):
+            print("¡Este puzzle no tiene solución!")
+            continue
+        
+        print("\n¿Qué algoritmo quieres usar?")
+        print("1. A* (Recomendado - más rápido)")
+        print("2. BFS (Más lento pero exhaustivo)")
+        print("3. Ambos (para comparar)")
+        
+        while True:
+            try:
+                alg_choice = int(input("Elige opción (1-3): "))
+                if alg_choice in [1, 2, 3]:
+                    break
+                else:
+                    print("Por favor, introduce 1, 2 o 3")
+            except ValueError:
+                print("Por favor, introduce un número válido")
+        
+        if alg_choice in [1, 3]:
+            print("\n--- Algoritmo A* ---")
+            solution_astar = astar_solve(PuzzleState(puzzle))
+            if solution_astar:
+                print_solution(solution_astar)
+        
+        if alg_choice in [2, 3]:
+            print("\n--- Algoritmo BFS ---")
+            # Solo usar BFS para puzzles no muy difíciles o si es el único puzzle
+            if ("Extremo" not in nombre and "Difícil" not in nombre) or len(puzzles) == 1:
+                if "Extremo" in nombre:
+                    print("Advertencia: BFS puede ser muy lento para este puzzle...")
+                    confirm = input("¿Continuar con BFS? (s/n): ").lower()
+                    if confirm != 's':
+                        print("BFS omitido por el usuario")
+                        continue
+                
+                solution_bfs = bfs_solve(PuzzleState(puzzle))
+                if solution_bfs:
+                    print_solution(solution_bfs)
+            else:
+                print("(BFS omitido para este puzzle - demasiado complejo)")
+        
+        # Para puzzles aleatorios, preguntar si generar otro
+        if len(puzzles) == 1 and "Aleatorio" in puzzles[0][0]:
+            print(f"\n¿Quieres generar otro puzzle aleatorio?")
+            print("1. Sí, misma dificultad")
+            print("2. Sí, diferente dificultad") 
+            print("3. No, terminar")
+            
+            while True:
+                try:
+                    next_choice = int(input("Elige opción (1-3): "))
+                    if next_choice in [1, 2, 3]:
+                        break
+                    else:
+                        print("Por favor, introduce 1, 2 o 3")
+                except ValueError:
+                    print("Por favor, introduce un número válido")
+            
+            if next_choice == 1:
+                # Misma dificultad
+                current_difficulty = nombre.split('(')[1].split(')')[0].lower()
+                new_puzzle = generate_random_puzzle(current_difficulty)
+                puzzles = [(f"Aleatorio ({current_difficulty.capitalize()})", new_puzzle)]
+            elif next_choice == 2:
+                # Diferente dificultad
+                new_difficulty = select_random_difficulty()
+                new_puzzle = generate_random_puzzle(new_difficulty)
+                puzzles = [(f"Aleatorio ({new_difficulty.capitalize()})", new_puzzle)]
+            else:
+                break  # Terminar
+
+if _name_ == "_main_":
+    main()

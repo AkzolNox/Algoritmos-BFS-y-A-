@@ -1,1 +1,396 @@
+import random
+import time
+import heapq
+from collections import deque
+from typing import List, Tuple, Optional, Dict
 
+
+class Laberinto:
+    def __init__(self, tamaño: int = 20):
+        if tamaño < 5:
+            raise ValueError("El tamaño mínimo recomendado es 5.")
+        self.tamaño: int = tamaño
+        self.laberinto: List[List[int]] = []
+        self.inicio: Tuple[int, int] = (0, 0)
+        self.fin: Tuple[int, int] = (0, 0)
+        self.generar_puntos_aleatorios()
+        self.generar_laberinto()
+
+    def generar_puntos_aleatorios(self) -> None:
+        """Genera puntos de inicio y fin aleatorios (lejos entre sí)."""
+        while True:
+            self.inicio = (random.randint(1, self.tamaño - 2),
+                           random.randint(1, self.tamaño - 2))
+            self.fin = (random.randint(1, self.tamaño - 2),
+                        random.randint(1, self.tamaño - 2))
+            # distancia Manhattan solo para forzar separación; no se usa en la búsqueda
+            distancia = abs(self.inicio[0] - self.fin[0]) + abs(self.inicio[1] - self.fin[1])
+            if self.inicio != self.fin and distancia >= max(3, self.tamaño // 3):
+                break
+
+    def generar_laberinto(self) -> None:
+        """Crea un laberinto con paredes exteriores y obstáculos aleatorios, garantizando al menos un camino."""
+        self.laberinto = [[0 for _ in range(self.tamaño)] for _ in range(self.tamaño)]
+
+        # Paredes exteriores
+        for i in range(self.tamaño):
+            self.laberinto[0][i] = 1
+            self.laberinto[self.tamaño - 1][i] = 1
+            self.laberinto[i][0] = 1
+            self.laberinto[i][self.tamaño - 1] = 1
+
+        # Obstáculos aleatorios (20%)
+        num_obstaculos = int(self.tamaño * self.tamaño * 0.20)
+        for _ in range(num_obstaculos):
+            i = random.randint(1, self.tamaño - 2)
+            j = random.randint(1, self.tamaño - 2)
+            if (i, j) != self.inicio and (i, j) != self.fin:
+                self.laberinto[i][j] = 1
+
+        # Asegurar al menos un camino en "L"
+        self.asegurar_camino()
+
+    def asegurar_camino(self) -> None:
+        """Asegura que existe un camino básico en forma de L entre inicio y fin."""
+        x1, y1 = self.inicio
+        x2, y2 = self.fin
+        step_y = 1 if y2 > y1 else -1
+        for j in range(y1, y2 + step_y, step_y):
+            self.laberinto[x1][j] = 0
+        step_x = 1 if x2 > x1 else -1
+        for i in range(x1, x2 + step_x, step_x):
+            self.laberinto[i][y2] = 0
+
+    def es_valido(self, x: int, y: int) -> bool:
+        """Verifica si una posición es válida (dentro del laberinto y no es pared)."""
+        return (0 <= x < self.tamaño and 0 <= y < self.tamaño and self.laberinto[x][y] == 0)
+
+    def obtener_vecinos(self, x: int, y: int) -> List[Tuple[int, int]]:
+        """Obtiene los vecinos válidos de una posición."""
+        vecinos: List[Tuple[int, int]] = []
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = x + dx, y + dy
+            if self.es_valido(nx, ny):
+                vecinos.append((nx, ny))
+        return vecinos
+
+    # ==========================
+    # ALGORITMOS DE BÚSQUEDA
+    # ==========================
+
+    def bfs(self) -> Optional[List[Tuple[int, int]]]:
+        """Búsqueda por Anchura (óptima en pasos en grafo no ponderado)."""
+        cola = deque([self.inicio])
+        visitado: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {self.inicio: None}
+        
+        while cola:
+            x, y = cola.popleft()
+            if (x, y) == self.fin:
+                return self.reconstruir_camino(visitado)
+            
+            for vecino in self.obtener_vecinos(x, y):
+                if vecino not in visitado:
+                    visitado[vecino] = (x, y)
+                    cola.append(vecino)
+        
+        return None
+
+    def dfs(self) -> Optional[List[Tuple[int, int]]]:
+        """Búsqueda en Profundidad (no garantiza camino más corto)."""
+        pila = [self.inicio]
+        visitado: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {self.inicio: None}
+        
+        while pila:
+            x, y = pila.pop()
+            if (x, y) == self.fin:
+                return self.reconstruir_camino(visitado)
+            
+            for vecino in self.obtener_vecinos(x, y):
+                if vecino not in visitado:
+                    visitado[vecino] = (x, y)
+                    pila.append(vecino)
+        
+        return None
+
+    def a_estrella(self) -> Optional[List[Tuple[int, int]]]:
+        """
+        Algoritmo A* (A-estrella):
+        Combina el costo real g(n) con la heurística h(n) para encontrar el camino óptimo.
+        f(n) = g(n) + h(n)
+        """
+        inicio, fin = self.inicio, self.fin
+        
+        # Cola de prioridad: (f_score, g_score, nodo)
+        open_heap: List[Tuple[float, float, Tuple[int, int]]] = []
+        heapq.heappush(open_heap, (self.heuristica_euclidea(inicio, fin), 0, inicio))
+        
+        came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {inicio: None}
+        g_score: Dict[Tuple[int, int], float] = {inicio: 0}
+        f_score: Dict[Tuple[int, int], float] = {inicio: self.heuristica_euclidea(inicio, fin)}
+        
+        open_set = {inicio}
+        
+        while open_heap:
+            current_f, current_g, actual = heapq.heappop(open_heap)
+            
+            if actual not in open_set:
+                continue
+                
+            open_set.remove(actual)
+            
+            if actual == fin:
+                return self.reconstruir_camino(came_from)
+            
+            for vecino in self.obtener_vecinos(*actual):
+                tentative_g = g_score[actual] + 1  # Costo uniforme de 1 por paso
+                
+                if vecino not in g_score or tentative_g < g_score[vecino]:
+                    came_from[vecino] = actual
+                    g_score[vecino] = tentative_g
+                    f_score[vecino] = tentative_g + self.heuristica_euclidea(vecino, fin)
+                    
+                    if vecino not in open_set:
+                        open_set.add(vecino)
+                        heapq.heappush(open_heap, (f_score[vecino], g_score[vecino], vecino))
+        
+        return None
+
+    @staticmethod
+    def heuristica_euclidea(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+        """Heurística Euclídea: distancia en línea recta."""
+        dx = a[0] - b[0]
+        dy = a[1] - b[1]
+        return (dx * dx + dy * dy) ** 0.5
+
+    @staticmethod
+    def heuristica_manhattan(a: Tuple[int, int], b: Tuple[int, int]) -> int:
+        """Heurística Manhattan: suma de diferencias absolutas."""
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def busqueda_informada(self) -> Optional[List[Tuple[int, int]]]:
+        """
+        Búsqueda Informada (Greedy Best-First Search):
+        Expande primero el nodo con menor h(n) respecto a la meta (sin considerar g(n)).
+        No garantiza óptimo, pero suele ser rápida y dirigida hacia el objetivo.
+        """
+        inicio, fin = self.inicio, self.fin
+
+        # Cola de prioridad por h(n): (h, nodo)
+        open_heap: List[Tuple[float, Tuple[int, int]]] = []
+        heapq.heappush(open_heap, (self.heuristica_euclidea(inicio, fin), inicio))
+
+        # 'came_from' para reconstruir el camino; 'visitado' evita reexpansiones
+        came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {inicio: None}
+        visitado: Dict[Tuple[int, int], bool] = {inicio: True}
+
+        while open_heap:
+            _, actual = heapq.heappop(open_heap)
+
+            if actual == fin:
+                return self.reconstruir_camino(came_from)
+
+            for vecino in self.obtener_vecinos(*actual):
+                if vecino not in visitado:
+                    visitado[vecino] = True
+                    came_from[vecino] = actual
+                    h = self.heuristica_euclidea(vecino, fin)
+                    heapq.heappush(open_heap, (h, vecino))
+
+        return None
+
+    def dijkstra(self) -> Optional[List[Tuple[int, int]]]:
+        """
+        Algoritmo de Dijkstra:
+        Encuentra el camino más corto considerando solo g(n) (sin heurística).
+        """
+        inicio, fin = self.inicio, self.fin
+        
+        # Cola de prioridad: (distancia, nodo)
+        heap: List[Tuple[float, Tuple[int, int]]] = [(0, inicio)]
+        distancias: Dict[Tuple[int, int], float] = {inicio: 0}
+        came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {inicio: None}
+        visitado: set = set()
+        
+        while heap:
+            dist_actual, actual = heapq.heappop(heap)
+            
+            if actual in visitado:
+                continue
+                
+            visitado.add(actual)
+            
+            if actual == fin:
+                return self.reconstruir_camino(came_from)
+            
+            for vecino in self.obtener_vecinos(*actual):
+                if vecino not in visitado:
+                    nueva_dist = dist_actual + 1  # Costo uniforme de 1
+                    
+                    if vecino not in distancias or nueva_dist < distancias[vecino]:
+                        distancias[vecino] = nueva_dist
+                        came_from[vecino] = actual
+                        heapq.heappush(heap, (nueva_dist, vecino))
+        
+        return None
+
+    # ==========================
+
+    def reconstruir_camino(self, came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]]) -> List[Tuple[int, int]]:
+        """Reconstruye el camino desde self.fin hasta self.inicio usando predecesores."""
+        camino: List[Tuple[int, int]] = []
+        actual: Optional[Tuple[int, int]] = self.fin
+        
+        if actual not in came_from:
+            return []
+            
+        while actual is not None:
+            camino.append(actual)
+            actual = came_from.get(actual)
+            
+        return list(reversed(camino))
+
+    def imprimir_laberinto(self, camino: Optional[List[Tuple[int, int]]] = None) -> None:
+        """Imprime el laberinto con el camino marcado."""
+        camino_set = set(camino) if camino else set()
+        print("+" + "-" * (self.tamaño * 2 - 1) + "+")
+        
+        for i in range(self.tamaño):
+            fila = ["|"]
+            for j in range(self.tamaño):
+                if (i, j) == self.inicio:
+                    ch = "S"
+                elif (i, j) == self.fin:
+                    ch = "F"
+                elif (i, j) in camino_set:
+                    ch = "*"
+                elif self.laberinto[i][j] == 1:
+                    ch = "█"
+                else:
+                    ch = " "
+                fila.append(ch)
+                fila.append(" ")
+            fila.append("|")
+            print("".join(fila))
+            
+        print("+" + "-" * (self.tamaño * 2 - 1) + "+")
+
+    def comparar_algoritmos(self, imprimir=True) -> Dict[str, Dict[str, object]]:
+        """Compara el rendimiento de todos los algoritmos implementados."""
+        if imprimir:
+            print("Laberinto generado:")
+            self.imprimir_laberinto()
+            print(f"Tamaño: {self.tamaño}x{self.tamaño}")
+            print(f"Inicio: {self.inicio}, Fin: {self.fin}\n")
+
+        resultados: Dict[str, Dict[str, object]] = {}
+        algoritmos = [
+            ("BFS", self.bfs, "bfs"),
+            ("DFS", self.dfs, "dfs"),
+            ("Dijkstra", self.dijkstra, "dijkstra"),
+            ("A*", self.a_estrella, "a_estrella"),
+            ("Greedy Best-First", self.busqueda_informada, "informada"),
+        ]
+
+        for nombre, algoritmo, clave in algoritmos:
+            if imprimir:
+                print(f"Ejecutando {nombre}...")
+            
+            t0 = time.time()
+            camino = algoritmo()
+            dt = time.time() - t0
+            
+            if imprimir:
+                if camino:
+                    print(f"{nombre}: Camino encontrado ({len(camino)} pasos)")
+                    print(f"Tiempo: {dt:.6f} s\n")
+                else:
+                    print(f"{nombre}: No se encontró camino\n")
+                    
+            resultados[clave] = {
+                "camino": camino, 
+                "tiempo": dt,
+                "longitud": len(camino) if camino else 0
+            }
+
+        return resultados
+
+    def analisis_comparativo(self) -> None:
+        """Realiza un análisis comparativo detallado de los algoritmos."""
+        print("=== ANÁLISIS COMPARATIVO ===")
+        resultados = self.comparar_algoritmos(imprimir=False)
+        
+        print(f"{'Algoritmo':<20} {'Tiempo (ms)':<12} {'Longitud':<10} {'Encontrado':<10}")
+        print("-" * 60)
+        
+        for nombre_clave, datos in resultados.items():
+            nombres_completos = {
+                "bfs": "BFS",
+                "dfs": "DFS", 
+                "dijkstra": "Dijkstra",
+                "a_estrella": "A*",
+                "informada": "Greedy Best-First"
+            }
+            
+            nombre = nombres_completos.get(nombre_clave, nombre_clave)
+            tiempo_ms = datos["tiempo"] * 1000
+            longitud = datos["longitud"]
+            encontrado = "Sí" if datos["camino"] else "No"
+            
+            print(f"{nombre:<20} {tiempo_ms:<12.3f} {longitud:<10} {encontrado:<10}")
+
+        # Mostrar el mejor camino encontrado
+        caminos_validos = [(k, v) for k, v in resultados.items() if v["camino"]]
+        if caminos_validos:
+            mejor = min(caminos_validos, key=lambda x: x[1]["longitud"])
+            print(f"\nMejor camino: {mejor[0]} con {mejor[1]['longitud']} pasos")
+            
+            print("\nVisualizando el mejor camino:")
+            self.imprimir_laberinto(mejor[1]["camino"])
+
+
+# Función principal mejorada
+def main() -> None:
+    print("RESOLVEDOR DE LABERINTOS CON MÚLTIPLES ALGORITMOS")
+    print("=" * 55)
+
+    try:
+        entrada = input("Tamaño del laberinto (default 15): ").strip()
+        tamaño = int(entrada) if entrada else 15
+        
+        if tamaño < 5:
+            print("Tamaño mínimo: 5. Ajustando...")
+            tamaño = 5
+        elif tamaño > 50:
+            print("Tamaño máximo recomendado: 50. Ajustando...")
+            tamaño = 50
+            
+    except ValueError:
+        print("Entrada no válida. Usando tamaño 15.")
+        tamaño = 15
+
+    try:
+        entrada_tests = input("Número de pruebas (default 1): ").strip()
+        num_laberintos = int(entrada_tests) if entrada_tests else 1
+        num_laberintos = max(1, min(num_laberintos, 5))  # Entre 1 y 5
+    except ValueError:
+        print("Entrada no válida. Usando 1 prueba.")
+        num_laberintos = 1
+
+    # Opcional: semilla para reproducibilidad
+    usar_semilla = input("¿Usar semilla fija para reproducibilidad? (s/n): ").strip().lower()
+    if usar_semilla == 's':
+        random.seed(42)
+
+    for i in range(num_laberintos):
+        print(f"\n{'='*20} LABERINTO {i + 1} {'='*20}")
+        lab = Laberinto(tamaño)
+        lab.analisis_comparativo()
+
+    print(f"\n{'='*55}")
+    print("¡Análisis completado!")
+    print("\nLeyenda:")
+    print("S = Inicio, F = Fin, * = Camino, █ = Pared")
+
+
+if __name__ == "__main__":
+    main()
